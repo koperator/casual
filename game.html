@@ -1,0 +1,370 @@
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Advanced Zombie Shooter: Final Version</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { background: #eee; display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    (function(){
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = 3840; canvas.height = 2160;
+      const buildings = [
+       { cx: 200, cy: 200, width: 400, height: 800, color: "#5A5A5A" },
+        { cx: 1050, cy: 150, width: 800, height: 300, color: "#5A5A5A" },
+       { cx: 3200, cy: 200, width: 300, height: 900, color: "#5A5A5A" },
+        { cx: 300, cy: 1800, width: 1200, height: 400, color: "#5A5A5A" },
+        { cx: 1700, cy: 1400, width: 600, height: 800, color: "#5A5A5A" },
+       { cx: 300, cy: 1100, width: 300, height: 700, color: "#5A5A5A" },
+       { cx: 3300, cy: 900, width: 200, height: 900, color: "#5A5A5A" },
+        { cx: 600, cy: 1200, width: 700, height: 300, color: "#5A5A5A" },
+        { cx: 2600, cy: 1200, width: 900, height: 500, color: "#5A5A5A" },
+        { cx: 800, cy: 400, width: 200, height: 600, color: "#5A5A5A" },
+        { cx: 2800, cy: 1700, width: 1000, height: 300, color: "#5A5A5A" }
+      ];
+      function pointInRect_AABB(pt, b) { return (pt.x >= b.cx - b.width/2 && pt.x <= b.cx + b.width/2 && pt.y >= b.cy - b.height/2 && pt.y <= b.cy + b.height/2); }
+      function rectIntersect(a, b) { return (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y); }
+      function pointInRect(x, y, rect) { return (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height); }
+      const player = { x: canvas.width/2 - 15, y: canvas.height/2 - 145, width: 30, height: 30, hp: 3, invulnTimer: 0 };
+      let mouseX = canvas.width/2, mouseY = canvas.height/2, shooting = false;
+      canvas.addEventListener("mousemove", e => { const r = canvas.getBoundingClientRect(); mouseX = e.clientX - r.left; mouseY = e.clientY - r.top; });
+      canvas.addEventListener("mousedown", () => shooting = true);
+      canvas.addEventListener("mouseup", () => shooting = false);
+      const keys = {};
+      window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+      window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+      const bulletSpeed = 3950, bulletSize = 5, bulletLength = 22, fireRate = 60/900;
+      let timeSinceLastShot = fireRate, magazineCapacity = 30, currentMagazine = magazineCapacity, reloadTime = 0.5, reloading = false, reloadTimer = 0;
+      const initialBulletLifetime = 0.7, bullets = [];
+      const particles = [];
+      const muzzleFlashes = [];
+      function spawnParticles(x,y,bullet) {
+        for(let i=0;i<50;i++){
+          const offset = (Math.random()-0.5)*(Math.PI/4);
+          const angle = Math.atan2(bullet.vy, bullet.vx) + offset;
+          const speed = 850 + Math.random()*200;
+          const targetDistance = 20 + Math.random()*40;
+          particles.push({ x, y, vx: speed*Math.cos(angle), vy: speed*Math.sin(angle), startX: x, startY: y, targetDistance, color: 'red' });
+        }
+      }
+      const zombies = [];
+      let zombieSpawnTimer = 0.2;
+      function spawnZombie() {
+        const margin = 50, centerX = canvas.width/2, centerY = canvas.height/2;
+        const spawnRadius = Math.hypot(centerX, centerY) + margin, angle = Math.random()*Math.PI*2;
+        let x = centerX + spawnRadius*Math.cos(angle), y = centerY + spawnRadius*Math.sin(angle);
+        let t = Math.min(elapsedTime/60,1);
+        let regRatio = 0.80*(1-t) + 0.45*t, bigRatio = 0.15*(1-t) + 0.35*t, r = Math.random();
+        let scaleFactor, health, color, speedMultiplier, type, pauseTimer, pauseDuration;
+        if(r < regRatio) { scaleFactor = 1; health = 2; color = "#aeff00"; type = "regular"; speedMultiplier = 0.6 + Math.random()*0.7; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
+        else if(r < regRatio+bigRatio) { scaleFactor = 1.77; health = 13; color = "#00ff90"; type = "big"; speedMultiplier = 0.6 + Math.random()*0.3; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
+        else { scaleFactor = 3.77; health = 122; color = "#187699"; type = "huge"; speedMultiplier = 0.4 + Math.random()*0.3; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
+        const width = 40*scaleFactor, height = 40*scaleFactor;
+        x -= width/2; y -= height/2;
+        zombies.push({ x, y, width, height, health, color, speed: 80, speedMultiplier, pauseTimer, pauseDuration, isPaused: false, dead: false, type, scored: false, brownianTimer: 0.2+Math.random()*0.3, brownianDir: { x: Math.cos(Math.random()*Math.PI*2), y: Math.sin(Math.random()*Math.PI*2) } });
+      }
+      let bossSpawned = false;
+      function spawnBoss() {
+        const scaleFactor = 5;
+        const width = 40 * scaleFactor;
+        const height = 40 * scaleFactor;
+        const x = 2800 - width/2;
+        const y = -60 - height/2;
+        zombies.push({
+          x: x,
+          y: y,
+          width: width,
+          height: height,
+          health: 589,
+          color: "#000000",
+          speed: 80 * 0.369,
+          speedMultiplier: 1,
+          pauseTimer: 9999,
+          pauseDuration: 0,
+          isPaused: false,
+          dead: false,
+          type: "boss",
+          scored: false,
+          brownianTimer: 9999,
+          brownianDir: { x: 0, y: 0 }
+        });
+      }
+      const baseSpeed = 500;
+      function updateZombies(dt) {
+        zombieSpawnTimer -= dt;
+        while(zombieSpawnTimer <= 0) { spawnZombie(); zombieSpawnTimer += 0.5; }
+        for(let i = zombies.length-1;i>=0;i--){
+          let z = zombies[i];
+          if(z.health > 0) {
+            if(z.isPaused){ z.pauseDuration -= dt; if(z.pauseDuration<=0){ z.isPaused = false; z.pauseTimer = 2+Math.random()*3; } }
+            else { z.pauseTimer -= dt; if(z.pauseTimer<=0){ z.isPaused = true; z.pauseDuration = 1; } }
+            z.brownianTimer -= dt; if(z.brownianTimer<=0 && z.type !== "boss"){ const angle = Math.random()*Math.PI*2; z.brownianDir = { x: Math.cos(angle), y: Math.sin(angle) }; z.brownianTimer = 0.2+Math.random()*0.3; }
+            const zx = z.x+z.width/2, zy = z.y+z.height/2, px = player.x+player.width/2, py = player.y+player.height/2;
+            let dx = px-zx, dy = py-zy; 
+            let d = Math.hypot(dx,dy); 
+            if(d){ dx /= d; dy /= d; }
+            
+            const avoidanceRadius = 200;
+            let avoidX = 0, avoidY = 0;
+            for(const b of buildings) {
+              const bx = b.cx, by = b.cy;
+              const toZombieX = zx - bx, toZombieY = zy - by;
+              const distance = Math.hypot(toZombieX, toZombieY);
+              
+              if(distance < avoidanceRadius) {
+                const repelStrength = 1 - (distance / avoidanceRadius);
+                avoidX += (toZombieX / (distance || 1)) * repelStrength;
+                avoidY += (toZombieY / (distance || 1)) * repelStrength;
+              }
+            }
+            
+            dx += avoidX * 0.8;
+            dy += avoidY * 0.8;
+            if(z.type !== "boss") {
+              dx += z.brownianDir.x * 0.3;
+              dy += z.brownianDir.y * 0.3;
+            }
+            const combinedD = Math.hypot(dx, dy);
+            if(combinedD > 0) {
+              dx /= combinedD;
+              dy /= combinedD;
+            }
+
+            z.x += dx*z.speed*z.speedMultiplier*dt; 
+            z.y += dy*z.speed*z.speedMultiplier*dt;
+
+            for(let b of buildings) {
+              const zb = { x: z.x, y: z.y, width: z.width, height: z.height };
+              const bb = { x: b.cx - b.width/2, y: b.cy - b.height/2, width: b.width, height: b.height };
+              if(rectIntersect(zb, bb)) { 
+                const diffX = (zx)-b.cx, diffY = (zy)-b.cy;
+                const mag = Math.hypot(diffX, diffY)||1; 
+                z.x += (diffX/mag)*5; 
+                z.y += (diffY/mag)*5; 
+              }
+            }
+          }
+          for(let j = bullets.length-1;j>=0;j--){
+            const b = bullets[j];
+            if(pointInRect(b.x, b.y, z)) {
+              spawnParticles(b.x,b.y,b);
+              if(z.health > 0) { 
+                const damage = 1+Math.random(); 
+                z.health -= damage; 
+                if(z.health<=0){ 
+                  z.dead = true; 
+                  z.color = "lightgrey"; 
+                  if(!z.scored){ 
+                    if(z.type==="regular") score += 1;
+                    else if(z.type==="big") score += 2;
+                    else if(z.type==="huge") score += 10;
+                    else if(z.type === "boss") score += 30;
+                    z.scored = true; 
+                  } 
+                } 
+              }
+              if(Math.random()>=0.6){ bullets.splice(j,1); }
+            }
+          }
+          if(!z.dead && rectIntersect(z, player) && player.invulnTimer <= 0) {
+            if(z.type === "boss") player.hp -= 3;
+            else player.hp--;
+            player.invulnTimer = 1;
+            if(player.hp <= 0) gameOver = true;
+          }
+        }
+      }
+      function movePlayer(dt) {
+        let dx = 0, dy = 0;
+        if(keys['w']) dy -= 1;
+        if(keys['s']) dy += 1;
+        if(keys['a']) dx -= 1;
+        if(keys['d']) dx += 1;
+        if(dx || dy) {
+          const n = Math.hypot(dx,dy);
+          const multiplier = shooting ? 0.5 : 1;
+          dx = (dx/n)*baseSpeed*multiplier*dt; dy = (dy/n)*baseSpeed*multiplier*dt;
+          const oldX = player.x, oldY = player.y;
+          player.x += dx; player.y += dy;
+          for(let b of buildings) {
+            const bRect = { x: b.cx - b.width/2, y: b.cy - b.height/2, width: b.width, height: b.height };
+            if(rectIntersect(player, bRect)) { player.x = oldX; player.y = oldY; break; }
+          }
+          if(player.x < 0) player.x = 0;
+          if(player.y < 0) player.y = 0;
+          if(player.x+player.width>canvas.width) player.x = canvas.width - player.width;
+          if(player.y+player.height>canvas.height) player.y = canvas.height - player.height;
+        }
+      }
+      function shootBullet() {
+        const px = player.x+player.width/2, py = player.y+player.height/2;
+        let dx = mouseX-px, dy = mouseY-py; const d = Math.hypot(dx,dy); if(d<1)return; dx/=d; dy/=d;
+        const isMoving = keys['w']||keys['a']||keys['s']||keys['d'];
+        const spreadAngle = isMoving ? (5*Math.PI/180) : (2.5*Math.PI/180);
+        const offset = (Math.random()*2*spreadAngle)-spreadAngle;
+        const cos = Math.cos(offset), sin = Math.sin(offset);
+        const newDirX = dx*cos - dy*sin, newDirY = dx*sin + dy*cos;
+        bullets.push({ x: px, y: py, vx: newDirX*bulletSpeed, vy: newDirY*bulletSpeed, lifetime: initialBulletLifetime });
+        
+        // Add muzzle flash
+        const angle = Math.atan2(newDirY, newDirX);
+        const offsetDistance = 95;
+        const muzzleX = px + newDirX * offsetDistance;
+        const muzzleY = py + newDirY * offsetDistance;
+        muzzleFlashes.push({
+          x: muzzleX,
+          y: muzzleY,
+          angle: angle,
+          lifetime: 0.05
+        });
+      }
+      function reflectBulletOffBuilding(bullet, building) {
+        const left = building.cx - building.width/2, right = building.cx + building.width/2;
+        const top = building.cy - building.height/2, bottom = building.cy + building.height/2;
+        const dLeft = Math.abs(bullet.x - left), dRight = Math.abs(right - bullet.x);
+        const dTop = Math.abs(bullet.y - top), dBottom = Math.abs(bullet.y - bottom);
+        const minDist = Math.min(dLeft,dRight,dTop,dBottom);
+        let normal = { x: 0, y: 0 };
+        if(minDist===dLeft) normal = { x: -1, y: 0 };
+        else if(minDist===dRight) normal = { x: 1, y: 0 };
+        else if(minDist===dTop) normal = { x: 0, y: -1 };
+        else normal = { x: 0, y: 1 };
+        const speed = Math.hypot(bullet.vx,bullet.vy);
+        if(speed<0.001){ bullet.lifetime=0; return; }
+        const vxN = bullet.vx/speed, vyN = bullet.vy/speed;
+        const phi = Math.acos(Math.abs(vxN*normal.x+vyN*normal.y))*(180/Math.PI);
+        const chance = phi/90;
+        if(Math.random()>chance){ bullet.lifetime=0; return; }
+        const dotP = vxN*normal.x+vyN*normal.y;
+        const rx = vxN-2*dotP*normal.x, ry = vyN-2*dotP*normal.y;
+        bullet.vx = rx*speed; bullet.vy = ry*speed;
+        const factor = 1+9*(1-(phi/90));
+        bullet.lifetime /= factor;
+      }
+      function updateShooting(dt) {
+        if(reloading){ reloadTimer -= dt; if(reloadTimer<=0){ reloading=false; currentMagazine=magazineCapacity; } }
+        else if(shooting){
+          timeSinceLastShot += dt;
+          let count = Math.floor(timeSinceLastShot/fireRate);
+          count = Math.min(count,5);
+          for(let i=0;i<count;i++){
+            if(currentMagazine>0){ shootBullet(); currentMagazine--; }
+            else { reloading=true; reloadTimer=reloadTime; break; }
+          }
+          timeSinceLastShot -= count*fireRate;
+        } else { timeSinceLastShot = fireRate; }
+      }
+      function updateBullets(dt) {
+        for(let i = bullets.length-1;i>=0;i--){
+          const b = bullets[i];
+          b.x += b.vx*dt; b.y += b.vy*dt;
+          for(let building of buildings){
+            if(pointInRect_AABB({x:b.x,y:b.y}, building)){ reflectBulletOffBuilding(b, building); break; }
+          }
+          b.lifetime -= dt; if(b.lifetime<=0){ bullets.splice(i,1); continue; }
+          if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height){ bullets.splice(i,1); }
+        }
+      }
+      function updateParticles(dt) {
+        for(let i = 0; i < particles.length; i++){
+          const p = particles[i];
+          const trav = Math.hypot(p.x-p.startX, p.y-p.startY);
+          if(trav < p.targetDistance){
+            p.x += p.vx*dt; p.y += p.vy*dt;
+            if(Math.hypot(p.x-p.startX, p.y-p.startY)>=p.targetDistance){
+              const angle = Math.atan2(p.y-p.startY, p.x-p.startX);
+              p.x = p.startX + p.targetDistance*Math.cos(angle);
+              p.y = p.startY + p.targetDistance*Math.sin(angle);
+              p.vx=0; p.vy=0;
+            }
+          }
+        }
+      }
+      function update(dt) {
+        movePlayer(dt);
+        updateShooting(dt);
+        updateBullets(dt);
+        updateParticles(dt);
+        updateZombies(dt);
+        player.invulnTimer = Math.max(0, player.invulnTimer - dt);
+        
+        // Update muzzle flashes
+        for (let i = muzzleFlashes.length - 1; i >= 0; i--) {
+          muzzleFlashes[i].lifetime -= dt;
+          if (muzzleFlashes[i].lifetime <= 0) {
+            muzzleFlashes.splice(i, 1);
+          }
+        }
+        
+        if(score >= 30 && !bossSpawned) {
+          spawnBoss();
+          bossSpawned = true;
+        }
+      }
+      function draw() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        for(const b of buildings){ 
+          ctx.save(); 
+          ctx.fillStyle=b.color; 
+          ctx.fillRect(b.cx-b.width/2, b.cy-b.height/2, b.width, b.height); 
+          ctx.restore(); 
+        }
+        // Draw muzzle flashes
+        for (const flash of muzzleFlashes) {
+          ctx.save();
+          ctx.translate(flash.x, flash.y);
+          ctx.rotate(flash.angle);
+          ctx.fillStyle = "yellow";
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(-100, -10);
+          ctx.lineTo(-100, 10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+        for(const p of particles){ ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill(); }
+        for(const z of zombies){ ctx.fillStyle=z.color; ctx.fillRect(z.x,z.y,z.width,z.height); }
+        for(const b of bullets){
+          const angle = Math.atan2(b.vy,b.vx);
+          ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(angle); ctx.fillStyle="orange"; ctx.fillRect(-bulletLength/2,-bulletSize/2,bulletLength,bulletSize); ctx.restore();
+        }
+        ctx.fillStyle="blue"; ctx.fillRect(player.x,player.y,player.width,player.height);
+        ctx.fillStyle="black"; ctx.font="20px Arial";
+        ctx.fillText("Ammo: " + currentMagazine,10,30);
+        ctx.fillText("Score: " + score,10,55);
+        ctx.fillText("HP: " + player.hp,10,80);
+
+        if(gameOver) {
+          ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "red";
+          ctx.font = "bold 100px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
+        }
+      }
+      let lastTime = performance.now(), elapsedTime = 0, gameOver = false, score = 0;
+      function gameLoop(timestamp) {
+        let dt = (timestamp - lastTime) / 1000;
+        lastTime = timestamp;
+        dt = Math.min(dt,0.1);
+        elapsedTime += dt;
+        update(dt);
+        draw();
+        if(!gameOver) requestAnimationFrame(gameLoop);
+      }
+      requestAnimationFrame(gameLoop);
+    })();
+  </script>
+</body>
+</html>
+```
