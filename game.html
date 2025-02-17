@@ -23,7 +23,7 @@
         { cx: 300, cy: 1800, width: 1200, height: 400, color: "#5A5A5A" },
         { cx: 1700, cy: 1400, width: 600, height: 800, color: "#5A5A5A" },
         { cx: 300, cy: 1100, width: 300, height: 700, color: "#5A5A5A" },
-        { cx: 3400, cy: 900, width: 200, height: 900, color: "#5A5A5A" },
+        { cx: 3300, cy: 900, width: 200, height: 900, color: "#5A5A5A" },
         { cx: 600, cy: 1200, width: 700, height: 300, color: "#5A5A5A" },
         { cx: 2650, cy: 1200, width: 900, height: 500, color: "#5A5A5A" },
         { cx: 800, cy: 400, width: 200, height: 600, color: "#5A5A5A" },
@@ -42,7 +42,7 @@
       window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
       const bulletSpeed = 5267, bulletSize = 5, bulletLength = 31;
       let fireRate = 60/900;
-      let timeSinceLastShot = fireRate, magazineCapacity = 30, currentMagazine = magazineCapacity, reloadTime = 0.55, reloading = false, reloadTimer = 0;
+      let timeSinceLastShot = fireRate, magazineCapacity = 20, currentMagazine = magazineCapacity, reloadTime = 0.55, reloading = false, reloadTimer = 0;
       const initialBulletLifetime = 0.89, bullets = [];
       const particles = [];
       const impactParticles = [];
@@ -57,7 +57,7 @@
           const levelsGained = newLevel - currentLevel;
           magazineCapacity += 5 * levelsGained;
           currentMagazine += 5 * levelsGained;
-          fireRate /= Math.pow(1.04, levelsGained);
+          fireRate /= Math.pow(1.03, levelsGained);
           currentLevel = newLevel;
           levelUpMessageTime = 1.5;
         }
@@ -285,7 +285,7 @@
         const px = player.x+player.width/2, py = player.y+player.height/2;
         let dx = mouseX-px, dy = mouseY-py; const d = Math.hypot(dx,dy); if(d<1)return; dx/=d; dy/=d;
         const isMoving = keys['w']||keys['a']||keys['s']||keys['d'];
-        const spreadMultiplier = Math.pow(1.03, currentLevel);
+        const spreadMultiplier = Math.pow(1.02, currentLevel);
         const spreadAngle = (isMoving ? 5 : 2.5) * Math.PI/180 * spreadMultiplier;
         const offset = (Math.random()*2*spreadAngle)-spreadAngle;
         const cos = Math.cos(offset), sin = Math.sin(offset);
