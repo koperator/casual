@@ -3,507 +3,791 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Advanced Zombie Shooter: Final Version</title>
+  <title>Enhanced Tank Game</title>
   <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { background: #eee; display: block; }
+    body { margin: 0; overflow: hidden; background: #222; }
+    canvas { display: block; background: #333; margin: 0 auto; }
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
+  <canvas id="gameCanvas" width="1800" height="1000"></canvas>
   <script>
-    (function(){
+    (function() {
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
-      canvas.width = 3840; canvas.height = 2160;
-      const buildings = [
-        { cx: 200, cy: 200, width: 400, height: 800, color: "#5A5A5A" },
-        { cx: 1050, cy: 150, width: 800, height: 300, color: "#5A5A5A" },
-        { cx: 3200, cy: 200, width: 300, height: 900, color: "#5A5A5A" },
-        { cx: 300, cy: 1800, width: 1200, height: 400, color: "#5A5A5A" },
-        { cx: 1700, cy: 1400, width: 600, height: 800, color: "#5A5A5A" },
-        { cx: 300, cy: 1100, width: 300, height: 700, color: "#5A5A5A" },
-        { cx: 3300, cy: 900, width: 200, height: 900, color: "#5A5A5A" },
-        { cx: 600, cy: 1200, width: 700, height: 300, color: "#5A5A5A" },
-        { cx: 2650, cy: 1200, width: 900, height: 500, color: "#5A5A5A" },
-        { cx: 800, cy: 400, width: 200, height: 600, color: "#5A5A5A" },
-        { cx: 2800, cy: 1700, width: 1000, height: 300, color: "#5A5A5A" }
-      ];
-      function pointInRect_AABB(pt, b) { return (pt.x >= b.cx - b.width/2 && pt.x <= b.cx + b.width/2 && pt.y >= b.cy - b.height/2 && pt.y <= b.cy + b.height/2); }
-      function rectIntersect(a, b) { return (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y); }
-      function pointInRect(x, y, rect) { return (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height); }
-      const player = { x: canvas.width/2 - 15, y: canvas.height/2 - 145, width: 30, height: 30, hp: 3, invulnTimer: 0 };
-      let mouseX = canvas.width/2, mouseY = canvas.height/2, shooting = false;
-      canvas.addEventListener("mousemove", e => { const r = canvas.getBoundingClientRect(); mouseX = e.clientX - r.left; mouseY = e.clientY - r.top; });
-      canvas.addEventListener("mousedown", () => shooting = true);
-      canvas.addEventListener("mouseup", () => shooting = false);
-      const keys = {};
-      window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-      window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-      const bulletSpeed = 5267, bulletSize = 5, bulletLength = 31;
-      let fireRate = 60/900;
-      let timeSinceLastShot = fireRate, magazineCapacity = 20, currentMagazine = magazineCapacity, reloadTime = 0.55, reloading = false, reloadTimer = 0;
-      const initialBulletLifetime = 0.89, bullets = [];
-      const particles = [];
-      const impactParticles = [];
-      const muzzleFlashes = [];
-      
-      let currentLevel = 0;
-      let levelUpMessageTime = 0;
 
-      function checkLevelUp() {
-        const newLevel = Math.floor(score / 20);
-        if (newLevel > currentLevel) {
-          const levelsGained = newLevel - currentLevel;
-          magazineCapacity += 5 * levelsGained;
-          currentMagazine += 5 * levelsGained;
-          fireRate /= Math.pow(1.03, levelsGained);
-          currentLevel = newLevel;
-          levelUpMessageTime = 1.5;
+      let lastTime = performance.now();
+      let deltaTime = 0;
+      let gameTime = 0;
+      const keys = {};
+      let mouseX = canvas.width / 2, mouseY = canvas.height / 2;
+      let score = 0;
+      let nextBossSpawnTime = 30;
+
+      const player = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        vx: 0,
+        vy: 0,
+        turretAngle: 0,
+        bodyAngle: 0,
+        reloadTime: 0,
+        health: 100,
+        radius: 15,
+        trackTimer: 0,
+        dead: false
+      };
+
+      const bullets = [];
+      const enemies = [];
+      const explosions = [];
+      const tracks = [];
+      let enemySpawnCooldown = 4.0;
+      const MAX_ENEMIES = 10;
+
+      window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; });
+      window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+      canvas.addEventListener("mousemove", e => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+      });
+      canvas.addEventListener("mousedown", e => { if (e.button === 0) shoot(); });
+
+      function shoot() {
+        if (player.reloadTime <= 0) {
+          bullets.push({
+            x: player.x,
+            y: player.y,
+            angle: player.turretAngle,
+            speed: 950,
+            owner: 'player',
+            radius: 6
+          });
+          player.reloadTime = 0.8;
         }
       }
 
-      function spawnImpactParticles(x, y, angle) {
-        for(let i=0;i<3;i++){
-          const spread = (Math.random()-0.5)*Math.PI/3;
-          const speed = 400 + Math.random()*300;
-          impactParticles.push({
+      function createExplosion(x, y, count = 15, speedMultiplier = 1, lifeMultiplier = 1, 
+                              colors = ['#FF6600', '#FF9900', '#FF3300'], 
+                              baseRadius = 3, radiusVariation = 5) {
+        for(let i = 0; i < count; i++) {
+          const life = (0.5 + Math.random() * 0.3) * lifeMultiplier;
+          explosions.push({
             x: x,
             y: y,
-            vx: Math.cos(angle + spread)*speed,
-            vy: Math.sin(angle + spread)*speed,
-            lifetime: 0.3 + Math.random()*0.2,
-            startLifetime: 0,
-            size: 2 + Math.random()*4,
-            color: `hsl(30, 5%, ${50+Math.random()*30}%)`
+            vx: (Math.random() - 0.5) * 400 * speedMultiplier,
+            vy: (Math.random() - 0.5) * 400 * speedMultiplier,
+            life: life,
+            initialLife: life,
+            radius: baseRadius + Math.random() * radiusVariation,
+            color: colors[Math.floor(Math.random() * colors.length)]
           });
         }
       }
 
-      function spawnParticles(x,y,bullet) {
-        for(let i=0;i<4;i++){
-          const offset = (Math.random()-0.5)*(Math.PI/4);
-          const angle = Math.atan2(bullet.vy, bullet.vx) + offset;
-          const speed = 850 + Math.random()*200;
-          const targetDistance = 20 + Math.random()*40;
-          particles.push({ 
-            x, y, 
-            vx: speed*Math.cos(angle), 
-            vy: speed*Math.sin(angle), 
-            startX: x, 
-            startY: y, 
-            targetDistance, 
-            color: 'red',
-            lifetime: 8 + Math.random() * 12  // Random lifetime between 8-20 seconds
-          });
-        }
-      }
+      function spawnEnemy() {
+        let pos = { x: 0, y: 0 };
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) { pos.x = Math.random() * canvas.width; pos.y = -20; }
+        else if (edge === 1) { pos.x = Math.random() * canvas.width; pos.y = canvas.height + 20; }
+        else if (edge === 2) { pos.x = -20; pos.y = Math.random() * canvas.height; }
+        else { pos.x = canvas.width + 20; pos.y = Math.random() * canvas.height; }
 
-      const zombies = [];
-      let zombieSpawnTimer = 0.1;
-      function spawnZombie() {
-        const margin = 50, centerX = canvas.width/2, centerY = canvas.height/2;
-        const spawnRadius = Math.hypot(centerX, centerY) + margin, angle = Math.random()*Math.PI*2;
-        let x = centerX + spawnRadius*Math.cos(angle), y = centerY + spawnRadius*Math.sin(angle);
-        let t = Math.min(elapsedTime/60,1);
-        let regRatio = 0.80*(1-t) + 0.45*t, bigRatio = 0.15*(1-t) + 0.35*t, r = Math.random();
-        let scaleFactor, health, color, speedMultiplier, type, pauseTimer, pauseDuration;
-        if(r < regRatio) { scaleFactor = 1; health = 2; color = "#aeff00"; type = "regular"; speedMultiplier = 0.6 + Math.random()*0.7; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
-        else if(r < regRatio+bigRatio) { scaleFactor = 1.77; health = 13; color = "#00ff90"; type = "big"; speedMultiplier = 0.6 + Math.random()*0.3; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
-        else { scaleFactor = 3.77; health = 122; color = "#187699"; type = "huge"; speedMultiplier = 0.4 + Math.random()*0.3; pauseTimer = 2 + Math.random()*3; pauseDuration = 1; }
-        const width = 40*scaleFactor, height = 40*scaleFactor;
-        x -= width/2; y -= height/2;
-        zombies.push({ x, y, width, height, originalWidth: width, originalHeight: height, health, color, speed: 80, speedMultiplier, pauseTimer, pauseDuration, isPaused: false, dead: false, type, scored: false, brownianTimer: 0.2+Math.random()*0.3, brownianDir: { x: Math.cos(Math.random()*Math.PI*2), y: Math.sin(Math.random()*Math.PI*2) } });
-      }
-      let bossSpawned = false;
-      function spawnBoss() {
-        const scaleFactor = 5;
-        const width = 40 * scaleFactor;
-        const height = 40 * scaleFactor;
-        const x = 2800 - width/2;
-        const y = -60 - height/2;
-        zombies.push({
-          x: x,
-          y: y,
-          width: width,
-          height: height,
-          originalWidth: width,
-          originalHeight: height,
-          health: 777,
-          color: "#000000",
-          speed: 80 * 0.44,
-          speedMultiplier: 1,
-          pauseTimer: 9999,
-          pauseDuration: 0,
-          isPaused: false,
+        const targetSide = Math.random() < 0.5 ? 'left' : 'right';
+        const targetX = targetSide === 'left' ? canvas.width * 0.25 : canvas.width * 0.75;
+        const targetY = Math.random() * canvas.height;
+
+        enemies.push({
+          x: pos.x,
+          y: pos.y,
+          shootTimer: 2.5 + Math.random() * 2,
+          radius: 15,
+          entryTime: undefined,
+          orbitDir: Math.random() < 0.5 ? 1 : -1,
+          desiredOrbitDist: 200 + Math.random() * 300,
+          orbitSpeed: 0.6 + Math.random() * 0.8,
+          vx: 0,
+          vy: 0,
+          orbitVariation: Math.random() * Math.PI * 2,
+          orbitPhase: Math.random() * Math.PI * 2,
+          acceleration: 120 + Math.random() * 30,
+          maxSpeed: 100 + Math.random() * 30,
+          lastDistance: 0,
+          bodyAngle: 0,
+          health: 2,
+          hitFlashTimer: 0,
           dead: false,
-          type: "boss",
-          scored: false,
-          brownianTimer: 9999,
-          brownianDir: { x: 0, y: 0 }
+          trackTimer: 0,
+          targetX: targetX,
+          targetY: targetY
         });
       }
-      const baseSpeed = 500;
-      function updateZombies(dt) {
-        zombieSpawnTimer -= dt;
-        while(zombieSpawnTimer <= 0) { spawnZombie(); zombieSpawnTimer += 0.5; }
-        for(let i = zombies.length-1;i>=0;i--){
-          let z = zombies[i];
-          if(z.health > 0) {
-            if(z.isPaused){ z.pauseDuration -= dt; if(z.pauseDuration<=0){ z.isPaused = false; z.pauseTimer = 2+Math.random()*3; } }
-            else { z.pauseTimer -= dt; if(z.pauseTimer<=0){ z.isPaused = true; z.pauseDuration = 1; } }
-            z.brownianTimer -= dt; if(z.brownianTimer<=0 && z.type !== "boss"){ const angle = Math.random()*Math.PI*2; z.brownianDir = { x: Math.cos(angle), y: Math.sin(angle) }; z.brownianTimer = 0.2+Math.random()*0.3; }
-            const zx = z.x+z.width/2, zy = z.y+z.height/2, px = player.x+player.width/2, py = player.y+player.height/2;
-            let dx = px-zx, dy = py-zy; 
-            let d = Math.hypot(dx,dy); 
-            if(d){ dx /= d; dy /= d; }
-            
-            const avoidanceRadius = 200;
-            let avoidX = 0, avoidY = 0;
-            for(const b of buildings) {
-              const bx = b.cx, by = b.cy;
-              const toZombieX = zx - bx, toZombieY = zy - by;
-              const distance = Math.hypot(toZombieX, toZombieY);
-              
-              if(distance < avoidanceRadius) {
-                const repelStrength = 1 - (distance / avoidanceRadius);
-                avoidX += (toZombieX / (distance || 1)) * repelStrength;
-                avoidY += (toZombieY / (distance || 1)) * repelStrength;
+
+      function spawnBoss() {
+        let pos = { x: 0, y: 0 };
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) { pos.x = Math.random() * canvas.width; pos.y = -20; }
+        else if (edge === 1) { pos.x = Math.random() * canvas.width; pos.y = canvas.height + 20; }
+        else if (edge === 2) { pos.x = -20; pos.y = Math.random() * canvas.height; }
+        else { pos.x = canvas.width + 20; pos.y = Math.random() * canvas.height; }
+
+        enemies.push({
+          x: pos.x,
+          y: pos.y,
+          shootTimer: 3.0,
+          radius: 40,
+          entryTime: undefined,
+          orbitDir: Math.random() < 0.5 ? 1 : -1,
+          desiredOrbitDist: 400,
+          orbitSpeed: 0.3,
+          vx: 0,
+          vy: 0,
+          orbitVariation: Math.random() * Math.PI * 2,
+          orbitPhase: Math.random() * Math.PI * 2,
+          acceleration: 60,
+          maxSpeed: 50,
+          lastDistance: 0,
+          bodyAngle: 0,
+          turretAngle: 0,
+          health: 11,
+          hitFlashTimer: 0,
+          dead: false,
+          trackTimer: 0,
+          targetX: canvas.width / 2,
+          targetY: canvas.height / 2,
+          isBoss: true,
+          burstCount: 0,
+          burstCooldown: 0
+        });
+      }
+
+      function enemyShoot(enemy) {
+        let dx = player.x - enemy.x;
+        let dy = player.y - enemy.y;
+        let dist = Math.hypot(dx, dy);
+        const bulletSpeed = 450;
+        let timeToHit = (dist * 1.3) / bulletSpeed;
+        let targetX = player.x + player.vx * timeToHit;
+        let targetY = player.y + player.vy * timeToHit;
+        let angle = Math.atan2(targetY - enemy.y, targetX - enemy.x);
+        angle += (Math.random() - 0.5) * 0.15;
+        bullets.push({
+          x: enemy.x,
+          y: enemy.y,
+          angle: angle,
+          speed: bulletSpeed,
+          owner: 'enemy',
+          radius: 5,
+          color: '#FF4444'
+        });
+      }
+
+      function update(dt) {
+        gameTime += dt;
+
+        // Spawn boss every 30 seconds
+        if (gameTime >= nextBossSpawnTime) {
+          spawnBoss();
+          nextBossSpawnTime += 30;
+        }
+
+        // Update track lifetimes
+        for (let i = tracks.length - 1; i >= 0; i--) {
+          tracks[i].lifetime -= dt;
+          if (tracks[i].lifetime <= 0) {
+            tracks.splice(i, 1);
+          }
+        }
+
+        // Player movement
+        const ACCEL = 250;
+        const FRICTION = 700;
+        const MAX_SPEED = 160;
+        const BASE_TURN_SPEED = 3.2;
+        const MIN_TURN_SPEED = 1.2;
+
+        let acceleration = 0;
+        if (keys['w']) acceleration = ACCEL;
+        if (keys['s']) acceleration = -ACCEL * 0.5;
+
+        player.vx += Math.cos(player.bodyAngle) * acceleration * dt;
+        player.vy += Math.sin(player.bodyAngle) * acceleration * dt;
+
+        if (!keys['w'] && !keys['s']) {
+          let speed = Math.hypot(player.vx, player.vy);
+          if (speed > 0) {
+            let deceleration = FRICTION * dt;
+            if (speed > deceleration) {
+              let factor = (speed - deceleration) / speed;
+              player.vx *= factor;
+              player.vy *= factor;
+            } else {
+              player.vx = 0;
+              player.vy = 0;
+            }
+          }
+        }
+
+        let speed = Math.hypot(player.vx, player.vy);
+        if (speed > MAX_SPEED) {
+          player.vx = (player.vx / speed) * MAX_SPEED;
+          player.vy = (player.vy / speed) * MAX_SPEED;
+        }
+
+        player.x += player.vx * dt;
+        player.y += player.vy * dt;
+        player.x = Math.max(player.radius, Math.min(player.x, canvas.width - player.radius));
+        player.y = Math.max(player.radius, Math.min(player.y, canvas.height - player.radius));
+
+        // Add player tracks
+        const currentSpeed = Math.hypot(player.vx, player.vy);
+        if (currentSpeed > 0) {
+          player.trackTimer += dt;
+          if (player.trackTimer >= 0.1) {
+            tracks.push({
+              x: player.x,
+              y: player.y,
+              angle: player.bodyAngle,
+              lifetime: 2.0
+            });
+            player.trackTimer = 0;
+          }
+        } else {
+          player.trackTimer = 0;
+        }
+
+        let currentTurnSpeed = MIN_TURN_SPEED + (1 - (currentSpeed / MAX_SPEED)) * (BASE_TURN_SPEED - MIN_TURN_SPEED);
+        if (keys['a']) player.bodyAngle -= currentTurnSpeed * dt;
+        if (keys['d']) player.bodyAngle += currentTurnSpeed * dt;
+
+        player.turretAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+
+        if (player.reloadTime > 0) {
+          player.reloadTime -= dt;
+          if (player.reloadTime < 0) player.reloadTime = 0;
+        }
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          let b = bullets[i];
+          b.x += Math.cos(b.angle) * b.speed * dt;
+          b.y += Math.sin(b.angle) * b.speed * dt;
+          if (b.x < -10 || b.x > canvas.width + 10 ||
+              b.y < -10 || b.y > canvas.height + 10) {
+            bullets.splice(i, 1);
+          }
+        }
+
+        enemies.forEach(enemy => {
+          if (enemy.dead) {
+            if (Math.random() < 0.3) {
+              createExplosion(
+                enemy.x, enemy.y,
+                3, 0.1, 1.0,
+                ['#FFFF00', '#FFA500'],
+                10, 0
+              );
+            }
+
+            const FRICTION = 500;
+            let speed = Math.hypot(enemy.vx, enemy.vy);
+            if (speed > 0) {
+              let deceleration = FRICTION * dt;
+              if (speed > deceleration) {
+                let factor = (speed - deceleration) / speed;
+                enemy.vx *= factor;
+                enemy.vy *= factor;
+              } else {
+                enemy.vx = 0;
+                enemy.vy = 0;
               }
             }
-            
-            dx += avoidX * 0.8;
-            dy += avoidY * 0.8;
-            if(z.type !== "boss") {
-              dx += z.brownianDir.x * 0.3;
-              dy += z.brownianDir.y * 0.3;
+            enemy.x += enemy.vx * dt;
+            enemy.y += enemy.vy * dt;
+            enemy.x = Math.max(enemy.radius, Math.min(enemy.x, canvas.width - enemy.radius));
+            enemy.y = Math.max(enemy.radius, Math.min(enemy.y, canvas.height - enemy.radius));
+            return;
+          }
+
+          // Add enemy tracks
+          const enemySpeed = Math.hypot(enemy.vx, enemy.vy);
+          if (enemySpeed > 0) {
+            enemy.trackTimer += dt;
+            if (enemy.trackTimer >= 0.1) {
+              tracks.push({
+                x: enemy.x,
+                y: enemy.y,
+                angle: enemy.bodyAngle,
+                lifetime: 2.0
+              });
+              enemy.trackTimer = 0;
             }
-            const combinedD = Math.hypot(dx, dy);
-            if(combinedD > 0) {
-              dx /= combinedD;
-              dy /= combinedD;
+          } else {
+            enemy.trackTimer = 0;
+          }
+
+          if (enemy.entryTime === undefined) {
+            let dx = enemy.targetX - enemy.x;
+            let dy = enemy.targetY - enemy.y;
+            let dist = Math.hypot(dx, dy);
+
+            if (dist > 0) {
+              let dirX = dx / dist;
+              let dirY = dy / dist;
+
+              let desiredVx = dirX * enemy.maxSpeed;
+              let desiredVy = dirY * enemy.maxSpeed;
+
+              let dvx = desiredVx - enemy.vx;
+              let dvy = desiredVy - enemy.vy;
+              let dvMag = Math.hypot(dvx, dvy);
+
+              if (dvMag > 0) {
+                let accelStep = enemy.acceleration * dt;
+                if (dvMag > accelStep) {
+                  dvx = (dvx / dvMag) * accelStep;
+                  dvy = (dvy / dvMag) * accelStep;
+                }
+                enemy.vx += dvx;
+                enemy.vy += dvy;
+              }
             }
 
-            z.x += dx*z.speed*z.speedMultiplier*dt; 
-            z.y += dy*z.speed*z.speedMultiplier*dt;
+            enemy.x += enemy.vx * dt;
+            enemy.y += enemy.vy * dt;
 
-            for(let b of buildings) {
-              const zb = { x: z.x, y: z.y, width: z.width, height: z.height };
-              const bb = { x: b.cx - b.width/2, y: b.cy - b.height/2, width: b.width, height: b.height };
-              if(rectIntersect(zb, bb)) { 
-                const diffX = (zx)-b.cx, diffY = (zy)-b.cy;
-                const mag = Math.hypot(diffX, diffY)||1; 
-                z.x += (diffX/mag)*5; 
-                z.y += (diffY/mag)*5; 
+            if (dist < 50 || (enemy.x >= enemy.radius && enemy.x <= canvas.width - enemy.radius &&
+                enemy.y >= enemy.radius && enemy.y <= canvas.height - enemy.radius)) {
+              enemy.entryTime = gameTime;
+            }
+
+            const currentSpeed = Math.hypot(enemy.vx, enemy.vy);
+            if (currentSpeed > 0) {
+              enemy.bodyAngle = Math.atan2(enemy.vy, enemy.vx);
+            }
+          } else {
+            // Boss-specific behavior
+            if (enemy.isBoss) {
+              // Update turret angle
+              let dx = player.x - enemy.x;
+              let dy = player.y - enemy.y;
+              let desiredAngle = Math.atan2(dy, dx);
+              let angleDiff = desiredAngle - enemy.turretAngle;
+              angleDiff = ((angleDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+              enemy.turretAngle += angleDiff * 2.0 * dt;
+
+              // Shooting logic
+              enemy.shootTimer -= dt;
+              if (enemy.shootTimer <= 0 && enemy.burstCount === 0) {
+                enemy.burstCount = 10;
+                enemy.burstCooldown = 0;
+                enemy.shootTimer = 0;
+              }
+
+              // Handle burst firing
+              if (enemy.burstCount > 0) {
+                enemy.burstCooldown -= dt;
+                while (enemy.burstCooldown <= 0 && enemy.burstCount > 0) {
+                  const totalSpread = 3 * Math.PI / 180;
+                  const startAngle = enemy.turretAngle - totalSpread / 2;
+                  const stepAngle = totalSpread / 9;
+                  const currentIndex = 10 - enemy.burstCount;
+                  const angle = startAngle + stepAngle * currentIndex;
+
+                  bullets.push({
+                    x: enemy.x,
+                    y: enemy.y,
+                    angle: angle,
+                    speed: 1700,
+                    owner: 'enemy',
+                    radius: 5,
+                    color: '#FF4444'
+                  });
+
+                  enemy.burstCount--;
+                  enemy.burstCooldown += 0.2;
+                }
+
+                if (enemy.burstCount === 0) {
+                  enemy.shootTimer = 3.0;
+                }
+              }
+            } else {
+              let dx = player.x - enemy.x;
+              let dy = player.y - enemy.y;
+              let dist = Math.hypot(dx, dy);
+              enemy.lastDistance = dist;
+
+              if (dist > 0) {
+                const dynamicOrbitDist = enemy.desiredOrbitDist + 50 * Math.sin(enemy.orbitPhase + gameTime * 0.8);
+                const dynamicOrbitSpeed = enemy.orbitSpeed * (1 + 0.2 * Math.sin(enemy.orbitPhase + gameTime * 1.2));
+
+                let directX = dx / dist;
+                let directY = dy / dist;
+                let tangentX = -directY;
+                let tangentY = directX;
+
+                let distToDesired = dist - dynamicOrbitDist;
+                let directWeight = distToDesired * 0.5;
+
+                enemy.orbitVariation += dt * 0.6;
+                let currentOrbitSpeed = dynamicOrbitSpeed * 
+                    (0.9 + 0.2 * Math.sin(enemy.orbitVariation));
+
+                let moveX = (directX * directWeight) + 
+                            (tangentX * enemy.orbitDir * currentOrbitSpeed);
+                let moveY = (directY * directWeight) + 
+                            (tangentY * enemy.orbitDir * currentOrbitSpeed);
+
+                let moveMag = Math.hypot(moveX, moveY);
+                if (moveMag > 0) {
+                  moveX /= moveMag;
+                  moveY /= moveMag;
+                }
+
+                let desiredVx = moveX * enemy.maxSpeed;
+                let desiredVy = moveY * enemy.maxSpeed;
+
+                let dvx = desiredVx - enemy.vx;
+                let dvy = desiredVy - enemy.vy;
+                let dvMag = Math.hypot(dvx, dvy);
+                if (dvMag > 0) {
+                  let accelStep = enemy.acceleration * dt;
+                  if (dvMag > accelStep) {
+                    dvx = (dvx / dvMag) * accelStep;
+                    dvy = (dvy / dvMag) * accelStep;
+                  }
+                  enemy.vx += dvx;
+                  enemy.vy += dvy;
+                }
+
+                enemy.x += enemy.vx * dt;
+                enemy.y += enemy.vy * dt;
+
+                const currentSpeed = Math.hypot(enemy.vx, enemy.vy);
+                if (currentSpeed > 0) {
+                  enemy.bodyAngle = Math.atan2(enemy.vy, enemy.vx);
+                }
+              }
+
+              if (enemy.entryTime !== undefined && gameTime - enemy.entryTime >= 1) {
+                enemy.x = Math.max(enemy.radius, Math.min(enemy.x, canvas.width - enemy.radius));
+                enemy.y = Math.max(enemy.radius, Math.min(enemy.y, canvas.height - enemy.radius));
+              }
+
+              enemy.shootTimer -= dt;
+              if (enemy.shootTimer <= 0) {
+                if (dist > 100 && dist < 800) {
+                  enemyShoot(enemy);
+                  enemy.shootTimer = 3.0 + Math.random() * 2.0;
+                } else {
+                  enemy.shootTimer = 0.5;
+                }
+              }
+
+              if (enemy.hitFlashTimer > 0) {
+                enemy.hitFlashTimer -= dt;
               }
             }
           }
-          for(let j = bullets.length-1;j>=0;j--){
-            const b = bullets[j];
-            if(pointInRect(b.x, b.y, z)) {
-              spawnParticles(b.x,b.y,b);
-              let removeBullet = Math.random() >= 0.6;
-              
-              if(z.health > 0) { 
-                const damage = 1+Math.random(); 
-                z.health -= damage; 
-                if(z.health<=0){ 
-                  z.dead = true; 
-                  z.color = "lightgrey"; 
-                  if(!z.scored){ 
-                    if(z.type==="regular") score += 1;
-                    else if(z.type==="big") score += 2;
-                    else if(z.type==="huge") score += 10;
-                    else if(z.type === "boss") score += 100;
-                    z.scored = true; 
-                    checkLevelUp();
-                  } 
-                } 
-                // Handle boss bullet reflection
-                if(z.type === "boss" && z.health > 0) {
-                  const bossBuilding = {
-                    cx: z.x + z.width/2,
-                    cy: z.y + z.height/2,
-                    width: z.width,
-                    height: z.height
-                  };
-                  reflectBulletOffBuilding(b, bossBuilding);
-                  removeBullet = false;
+        });
+
+        // Enemy-enemy collisions
+        for (let i = 0; i < enemies.length; i++) {
+          for (let j = i + 1; j < enemies.length; j++) {
+            const e1 = enemies[i];
+            const e2 = enemies[j];
+            const dx = e1.x - e2.x;
+            const dy = e1.y - e2.y;
+            const distance = Math.hypot(dx, dy);
+            const minDistance = e1.radius + e2.radius;
+            if (distance < minDistance) {
+              const overlap = (minDistance - distance) / 2;
+              e1.x += (dx / distance) * overlap;
+              e1.y += (dy / distance) * overlap;
+              e2.x -= (dx / distance) * overlap;
+              e2.y -= (dy / distance) * overlap;
+
+              e1.x = Math.max(e1.radius, Math.min(e1.x, canvas.width - e1.radius));
+              e1.y = Math.max(e1.radius, Math.min(e1.y, canvas.height - e1.radius));
+              e2.x = Math.max(e2.radius, Math.min(e2.x, canvas.width - e2.radius));
+              e2.y = Math.max(e2.radius, Math.min(e2.y, canvas.height - e2.radius));
+            }
+          }
+        }
+
+        // Player-enemy collisions
+        enemies.forEach(enemy => {
+          const dx = player.x - enemy.x;
+          const dy = player.y - enemy.y;
+          const distance = Math.hypot(dx, dy);
+          const minDistance = player.radius + enemy.radius;
+          if (distance < minDistance) {
+            const overlap = (minDistance - distance) / 2;
+            player.x += (dx / distance) * overlap;
+            player.y += (dy / distance) * overlap;
+            enemy.x -= (dx / distance) * overlap;
+            enemy.y -= (dy / distance) * overlap;
+
+            player.x = Math.max(player.radius, Math.min(player.x, canvas.width - player.radius));
+            player.y = Math.max(player.radius, Math.min(player.y, canvas.height - player.radius));
+            enemy.x = Math.max(enemy.radius, Math.min(enemy.x, canvas.width - enemy.radius));
+            enemy.y = Math.max(enemy.radius, Math.min(enemy.y, canvas.height - enemy.radius));
+          }
+        });
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          let b = bullets[i];
+          if (b.owner === 'player') {
+            for (let j = enemies.length - 1; j >= 0; j--) {
+              let enemy = enemies[j];
+              let dx = b.x - enemy.x;
+              let dy = b.y - enemy.y;
+              if (Math.hypot(dx, dy) < enemy.radius + b.radius) {
+                if (!enemy.dead) {
+                  enemy.health--;
+                  enemy.hitFlashTimer = 0.1;
+                  if (!enemy.isBoss) {
+                    const pushForce = 6000;
+                    enemy.vx += Math.cos(b.angle) * pushForce * dt;
+                    enemy.vy += Math.sin(b.angle) * pushForce * dt;
+                  }
+                  if (enemy.health <= 0) {
+                    enemy.dead = true;
+                    if (enemy.isBoss) {
+                      score += 1000;
+                      createExplosion(
+                        enemy.x, enemy.y,
+                        100, 2.0, 1.5,
+                        ['#FFFF00', '#FFA500'],
+                        10, 15
+                      );
+                    } else {
+                      score += 100;
+                      createExplosion(
+                        enemy.x, enemy.y,
+                        20, 1.5, 1.2,
+                        ['#FF0000', '#FFA500', '#FFFF00', '#FFFFFF'],
+                        3, 5
+                      );
+                    }
+                  } else {
+                    createExplosion(enemy.x, enemy.y, 5, 0.8, 0.5);
+                  }
+                } else {
+                  createExplosion(enemy.x, enemy.y, 5, 0.8, 0.5);
+                  const pushForce = 6000;
+                  enemy.vx += Math.cos(b.angle) * pushForce * dt;
+                  enemy.vy += Math.sin(b.angle) * pushForce * dt;
                 }
-              } else {
-                // Handle dead zombie hit (reduce size by 1)
-                const originalWidth = z.originalWidth;
-                const originalHeight = z.originalHeight;
-                const newWidth = z.width - 1;
-                const newHeight = z.height - 1;
-                const centerX = z.x + z.width / 2;
-                const centerY = z.y + z.height / 2;
-                z.width = Math.max(newWidth, 0);
-                z.height = Math.max(newHeight, 0);
-                z.x = centerX - z.width / 2;
-                z.y = centerY - z.height / 2;
-                if (z.width <= 10 || z.height <= 10) {
-                  zombies.splice(i, 1);
+                bullets.splice(i, 1);
+                break;
+              }
+            }
+          } else if (b.owner === 'enemy') {
+            let dx = b.x - player.x;
+            let dy = b.y - player.y;
+            if (Math.hypot(dx, dy) < player.radius + b.radius) {
+              player.health -= 10 + Math.random() * 7;
+              createExplosion(player.x, player.y, 10, 1.2, 0.8);
+              bullets.splice(i, 1);
+              if (player.health <= 0) {
+                player.dead = true;
+                createExplosion(
+                  player.x, player.y,
+                  50, 2.0, 1.5,
+                  ['#FFA500', '#FF0000', '#FFFF00'],
+                  10, 5
+                );
+                setTimeout(() => {
+                  alert("Game Over!");
+                  resetGame();
+                }, 2000);
+              }
+            }
+
+            // Enemy bullets vs dead enemies
+            for (let j = enemies.length - 1; j >= 0; j--) {
+              const enemy = enemies[j];
+              if (enemy.dead) {
+                const edx = b.x - enemy.x;
+                const edy = b.y - enemy.y;
+                if (Math.hypot(edx, edy) < enemy.radius + b.radius) {
+                  createExplosion(enemy.x, enemy.y, 5, 0.8, 0.5);
+                  const pushForce = 6000;
+                  enemy.vx += Math.cos(b.angle) * pushForce * dt;
+                  enemy.vy += Math.sin(b.angle) * pushForce * dt;
+                  bullets.splice(i, 1);
                   break;
                 }
               }
-
-              if(removeBullet) bullets.splice(j,1);
-            }
-          }
-          if(!z.dead && rectIntersect(z, player) && player.invulnTimer <= 0) {
-            if(z.type === "boss") player.hp -= 3;
-            else player.hp--;
-            player.invulnTimer = 1;
-            if(player.hp <= 0) gameOver = true;
-          }
-        }
-      }
-      function movePlayer(dt) {
-        let dx = 0, dy = 0;
-        if(keys['w']) dy -= 1;
-        if(keys['s']) dy += 1;
-        if(keys['a']) dx -= 1;
-        if(keys['d']) dx += 1;
-        if(dx || dy) {
-          const n = Math.hypot(dx,dy);
-          const multiplier = shooting ? 0.5 : 1;
-          dx = (dx/n)*baseSpeed*multiplier*dt; dy = (dy/n)*baseSpeed*multiplier*dt;
-          const oldX = player.x, oldY = player.y;
-          player.x += dx; player.y += dy;
-          for(let b of buildings) {
-            const bRect = { x: b.cx - b.width/2, y: b.cy - b.height/2, width: b.width, height: b.height };
-            if(rectIntersect(player, bRect)) { player.x = oldX; player.y = oldY; break; }
-          }
-          if(player.x < 0) player.x = 0;
-          if(player.y < 0) player.y = 0;
-          if(player.x+player.width>canvas.width) player.x = canvas.width - player.width;
-          if(player.y+player.height>canvas.height) player.y = canvas.height - player.height;
-        }
-      }
-      function shootBullet() {
-        const px = player.x+player.width/2, py = player.y+player.height/2;
-        let dx = mouseX-px, dy = mouseY-py; const d = Math.hypot(dx,dy); if(d<1)return; dx/=d; dy/=d;
-        const isMoving = keys['w']||keys['a']||keys['s']||keys['d'];
-        const spreadMultiplier = Math.pow(1.02, currentLevel);
-        const spreadAngle = (isMoving ? 5 : 2.5) * Math.PI/180 * spreadMultiplier;
-        const offset = (Math.random()*2*spreadAngle)-spreadAngle;
-        const cos = Math.cos(offset), sin = Math.sin(offset);
-        const newDirX = dx*cos - dy*sin, newDirY = dx*sin + dy*cos;
-        bullets.push({ x: px, y: py, vx: newDirX*bulletSpeed, vy: newDirY*bulletSpeed, lifetime: initialBulletLifetime });
-        
-        // Add muzzle flash
-        const angle = Math.atan2(newDirY, newDirX);
-        const offsetDistance = 95;
-        const muzzleX = px + newDirX * offsetDistance;
-        const muzzleY = py + newDirY * offsetDistance;
-        muzzleFlashes.push({
-          x: muzzleX,
-          y: muzzleY,
-          angle: angle,
-          lifetime: 0.05
-        });
-      }
-      function reflectBulletOffBuilding(bullet, building) {
-        const left = building.cx - building.width/2, right = building.cx + building.width/2;
-        const top = building.cy - building.height/2, bottom = building.cy + building.height/2;
-        const dLeft = Math.abs(bullet.x - left), dRight = Math.abs(right - bullet.x);
-        const dTop = Math.abs(bullet.y - top), dBottom = Math.abs(bullet.y - bottom);
-        const minDist = Math.min(dLeft,dRight,dTop,dBottom);
-        let normal = { x: 0, y: 0 };
-        if(minDist===dLeft) normal = { x: -1, y: 0 };
-        else if(minDist===dRight) normal = { x: 1, y: 0 };
-        else if(minDist===dTop) normal = { x: 0, y: -1 };
-        else normal = { x: 0, y: 1 };
-        
-        const speed = Math.hypot(bullet.vx, bullet.vy);
-        if(speed < 0.001) { bullet.lifetime = 0; return; }
-        const vxN = bullet.vx / speed;
-        const vyN = bullet.vy / speed;
-        const dotP = vxN * normal.x + vyN * normal.y;
-        const rx = vxN - 2 * dotP * normal.x;
-        const ry = vyN - 2 * dotP * normal.y;
-        const reflectionAngle = Math.atan2(ry, rx);
-        
-        spawnImpactParticles(bullet.x, bullet.y, reflectionAngle);
-
-        const phi = Math.acos(Math.abs(vxN*normal.x + vyN*normal.y)) * (180/Math.PI);
-        const chance = phi / 90;
-        if(Math.random() > chance) {
-          bullet.lifetime = 0;
-          return;
-        }
-
-        bullet.vx = rx * speed;
-        bullet.vy = ry * speed;
-
-        // Add 10% random angle to ricochet
-        const currentAngle = Math.atan2(ry, rx);
-        const randomAngle = (Math.random() * 0.2 - 0.1) * Math.PI;
-        const newAngle = currentAngle + randomAngle;
-        bullet.vx = Math.cos(newAngle) * speed;
-        bullet.vy = Math.sin(newAngle) * speed;
-
-        const factor = 1 + 9 * (1 - (phi / 90));
-        bullet.lifetime /= factor;
-      }
-      function updateShooting(dt) {
-        if(reloading){ reloadTimer -= dt; if(reloadTimer<=0){ reloading=false; currentMagazine=magazineCapacity; } }
-        else if(shooting){
-          timeSinceLastShot += dt;
-          let count = Math.floor(timeSinceLastShot/fireRate);
-          count = Math.min(count,5);
-          for(let i=0;i<count;i++){
-            if(currentMagazine>0){ shootBullet(); currentMagazine--; }
-            else { reloading=true; reloadTimer=reloadTime; break; }
-          }
-          timeSinceLastShot -= count*fireRate;
-        } else { timeSinceLastShot = fireRate; }
-      }
-      function updateBullets(dt) {
-        for(let i = bullets.length-1;i>=0;i--){
-          const b = bullets[i];
-          b.x += b.vx*dt; b.y += b.vy*dt;
-          let hitBuilding = false;
-          for(let building of buildings){
-            if(pointInRect_AABB({x:b.x,y:b.y}, building)){
-              reflectBulletOffBuilding(b, building);
-              hitBuilding = true;
-              break;
-            }
-          }
-          b.lifetime -= dt; if(b.lifetime<=0){ bullets.splice(i,1); continue; }
-          if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height){ bullets.splice(i,1); }
-        }
-      }
-      function updateParticles(dt) {
-        for(let i = particles.length-1; i >= 0; i--){
-          const p = particles[i];
-          p.lifetime -= dt;
-          if(p.lifetime <= 0) {
-            particles.splice(i, 1);
-            continue;
-          }
-          const trav = Math.hypot(p.x-p.startX, p.y-p.startY);
-          if(trav < p.targetDistance){
-            p.x += p.vx*dt; 
-            p.y += p.vy*dt;
-            if(Math.hypot(p.x-p.startX, p.y-p.startY)>=p.targetDistance){
-              const angle = Math.atan2(p.y-p.startY, p.x-p.startX);
-              p.x = p.startX + p.targetDistance*Math.cos(angle);
-              p.y = p.startY + p.targetDistance*Math.sin(angle);
-              p.vx=0; 
-              p.vy=0;
             }
           }
         }
-      }
-      function updateImpactParticles(dt) {
-        for(let i=impactParticles.length-1;i>=0;i--){
-          const p = impactParticles[i];
-          p.lifetime -= dt;
-          if(p.lifetime <= 0){
-            impactParticles.splice(i,1);
-            continue;
-          }
-          p.x += p.vx*dt;
-          p.y += p.vy*dt;
+
+        // Update explosions
+        for (let i = explosions.length - 1; i >= 0; i--) {
+          const e = explosions[i];
+          e.x += e.vx * dt;
+          e.y += e.vy * dt;
+          e.life -= dt;
+          e.radius *= 0.95;
+          if (e.life <= 0) explosions.splice(i, 1);
+        }
+
+        enemySpawnCooldown -= dt;
+        if (enemySpawnCooldown <= 0 && enemies.filter(e => !e.dead).length < MAX_ENEMIES) {
+          spawnEnemy();
+          enemySpawnCooldown = 4.0;
         }
       }
-      function update(dt) {
-        movePlayer(dt);
-        updateShooting(dt);
-        updateBullets(dt);
-        updateParticles(dt);
-        updateImpactParticles(dt);
-        updateZombies(dt);
-        player.invulnTimer = Math.max(0, player.invulnTimer - dt);
-        levelUpMessageTime = Math.max(0, levelUpMessageTime - dt);
-        
-        // Update muzzle flashes
-        for (let i = muzzleFlashes.length - 1; i >= 0; i--) {
-          muzzleFlashes[i].lifetime -= dt;
-          if (muzzleFlashes[i].lifetime <= 0) {
-            muzzleFlashes.splice(i, 1);
-          }
-        }
-        
-        if(score >= 30 && !bossSpawned) {
-          spawnBoss();
-          bossSpawned = true;
-        }
-      }
+
       function draw() {
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        for(const b of buildings){ 
-          ctx.save(); 
-          ctx.fillStyle=b.color; 
-          ctx.fillRect(b.cx-b.width/2, b.cy-b.height/2, b.width, b.height); 
-          ctx.restore(); 
-        }
-        // Draw muzzle flashes
-        for (const flash of muzzleFlashes) {
-          ctx.save();
-          ctx.translate(flash.x, flash.y);
-          ctx.rotate(flash.angle);
-          ctx.fillStyle = "yellow";
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(-100, -10);
-          ctx.lineTo(-100, 10);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-        }
-        // Draw impact particles
-        for(const p of impactParticles){
-          const alpha = Math.min(p.lifetime/0.3, 1);
-          ctx.fillStyle = `rgba(102, 102, 102, ${alpha})`;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size*alpha, 0, Math.PI*2);
-          ctx.fill();
-        }
-        for(const p of particles){ ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill(); }
-        for(const z of zombies){ ctx.fillStyle=z.color; ctx.fillRect(z.x,z.y,z.width,z.height); }
-        for(const b of bullets){
-          const angle = Math.atan2(b.vy,b.vx);
-          ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(angle); ctx.fillStyle="orange"; ctx.fillRect(-bulletLength/2,-bulletSize/2,bulletLength,bulletSize); ctx.restore();
-        }
-        ctx.fillStyle="blue"; ctx.fillRect(player.x,player.y,player.width,player.height);
-        ctx.fillStyle="black"; ctx.font="20px Arial";
-        ctx.fillText("Ammo: " + currentMagazine,10,30);
-        ctx.fillText("Score: " + score,10,55);
-        ctx.fillText("HP: " + player.hp,10,80);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        if (levelUpMessageTime > 0) {
+        // Draw tracks
+        tracks.forEach(track => {
           ctx.save();
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-          ctx.font = 'bold 80px Arial';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('LEVEL UP!', canvas.width/2, canvas.height/2);
+          ctx.translate(track.x, track.y);
+          ctx.rotate(track.angle);
+          ctx.globalAlpha = track.lifetime * 0.25;
+          ctx.strokeStyle = '#666';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(-8, -5);
+          ctx.lineTo(8, -5);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(-8, 5);
+          ctx.lineTo(8, 5);
+          ctx.stroke();
           ctx.restore();
+        });
+
+        explosions.forEach(e => {
+          ctx.fillStyle = e.color;
+          ctx.globalAlpha = e.life / e.initialLife;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        });
+
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.rotate(player.bodyAngle);
+        ctx.fillStyle = player.dead ? "black" : "green";
+        ctx.fillRect(-15, -10, 30, 20);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.rotate(player.turretAngle);
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(20, 0);
+        ctx.stroke();
+        ctx.restore();
+
+        enemies.forEach(enemy => {
+          ctx.save();
+          ctx.translate(enemy.x, enemy.y);
+          ctx.rotate(enemy.bodyAngle);
+          ctx.fillStyle = enemy.dead ? "#111111" : 
+                         (enemy.isBoss ? "#3366FF" : (enemy.hitFlashTimer > 0 ? "white" : "red"));
+          if (enemy.isBoss) {
+            ctx.fillRect(-40, -30, 80, 60);
+          } else {
+            ctx.fillRect(-15, -10, 30, 20);
+          }
+          ctx.restore();
+
+          if (!enemy.dead) {
+            let turretAngle, turretLength, lineWidth, strokeStyle;
+            if (enemy.isBoss) {
+              turretAngle = enemy.turretAngle;
+              turretLength = 60;
+              lineWidth = 12;
+              strokeStyle = "#4B0082";
+            } else {
+              turretAngle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+              turretLength = 20;
+              lineWidth = 4;
+              strokeStyle = "darkred";
+            }
+            ctx.save();
+            ctx.translate(enemy.x, enemy.y);
+            ctx.rotate(turretAngle);
+            ctx.strokeStyle = strokeStyle;
+            ctx.lineWidth = lineWidth;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(turretLength, 0);
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+
+        bullets.forEach(b => {
+          ctx.fillStyle = b.color ? b.color : (b.owner === 'player') ? "#FFFF00" : "#FF4444";
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(mouseX - 10, mouseY);
+        ctx.lineTo(mouseX + 10, mouseY);
+        ctx.moveTo(mouseX, mouseY - 10);
+        ctx.lineTo(mouseX, mouseY + 10);
+        ctx.stroke();
+
+        if (player.reloadTime > 0) {
+          let reloadFraction = 1 - player.reloadTime / 0.8;
+          ctx.strokeStyle = "cyan";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(mouseX, mouseY, 15, -Math.PI / 2, -Math.PI / 2 + reloadFraction * Math.PI * 2);
+          ctx.stroke();
         }
 
-        if(gameOver) {
-          ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = "red";
-          ctx.font = "bold 100px Arial";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
-        }
+        // Health bar
+        ctx.fillStyle = "#444";
+        ctx.fillRect(10, 10, 200, 25);
+        ctx.fillStyle = "#4CAF50";
+        ctx.fillRect(10, 10, 200 * (player.health / 100), 25);
+        
+        ctx.fillStyle = "white";
+        ctx.font = "20px sans-serif";
+        ctx.fillText("Score: " + score, 10, 60);
       }
-      let lastTime = performance.now(), elapsedTime = 0, gameOver = false, score = 0;
-      function gameLoop(timestamp) {
-        let dt = (timestamp - lastTime) / 1000;
-        lastTime = timestamp;
-        dt = Math.min(dt,0.1);
-        elapsedTime += dt;
-        update(dt);
+
+      function resetGame() {
+        player.x = canvas.width / 2;
+        player.y = canvas.height / 2;
+        player.vx = 0;
+        player.vy = 0;
+        player.health = 100;
+        player.dead = false;
+        bullets.length = 0;
+        enemies.length = 0;
+        explosions.length = 0;
+        tracks.length = 0;
+        enemySpawnCooldown = 4.0;
+        score = 0;
+        nextBossSpawnTime = 30;
+      }
+
+      function gameLoop(time) {
+        deltaTime = (time - lastTime) / 1000;
+        lastTime = time;
+        update(deltaTime);
         draw();
-        if(!gameOver) requestAnimationFrame(gameLoop);
+        requestAnimationFrame(gameLoop);
       }
       requestAnimationFrame(gameLoop);
     })();
